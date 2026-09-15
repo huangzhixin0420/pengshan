@@ -30,15 +30,19 @@ import (
 const releasesAPI = "https://api.github.com/repos/huangzhixin0420/pengshan/releases"
 
 func newUpdateCmd() *cobra.Command {
-	var wantVersion string
+	var (
+		wantVersion string
+		mirror      string
+	)
 	cmd := &cobra.Command{
 		Use:   "update",
-		Short: "检查并应用最新版本（GH Release，sha256 校验后自替换）",
+		Short: "检查并应用最新版本（sha256 校验后自替换；--mirror 可指镜像基 URL）",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runUpdate(wantVersion, cmd.OutOrStdout())
+			return runUpdate(wantVersion, mirror, cmd.OutOrStdout())
 		},
 	}
-	cmd.Flags().StringVarP(&wantVersion, "version", "v", "", "指定版本如 v0.1.0（默认 latest）")
+	cmd.Flags().StringVarP(&wantVersion, "version", "v", "", "指定版本如 v0.1.0（默认 latest；mirror 模式下仅作展示）")
+	cmd.Flags().StringVar(&mirror, "mirror", "", "资产镜像基 URL（如 file:///path/dist 或 https://mirror.example/dist；跳过 GitHub API）")
 	return cmd
 }
 
@@ -52,12 +56,23 @@ type assetInfo struct {
 	BrowserDownloadURL string `json:"browser_download_url"`
 }
 
-func runUpdate(wantVersion string, out io.Writer) error {
+func runUpdate(wantVersion, mirror string, out io.Writer) error {
 	client := &http.Client{Timeout: 30 * time.Second}
 
-	rel, err := fetchRelease(client, wantVersion)
-	if err != nil {
-		return err
+	var rel *releaseInfo
+	var err error
+	if mirror != "" {
+		// 镜像模式：资产在基 URL 下平铺，版本号仅展示。
+		tag := wantVersion
+		if tag == "" {
+			tag = "mirror"
+		}
+		rel = &releaseInfo{TagName: tag}
+	} else {
+		rel, err = fetchRelease(client, wantVersion)
+		if err != nil {
+			return err
+		}
 	}
 	fmt.Fprintf(out, "目标版本：%s（当前 %s）\n", rel.TagName, version.Version)
 	if rel.TagName == version.Version {
@@ -66,7 +81,7 @@ func runUpdate(wantVersion string, out io.Writer) error {
 	}
 
 	assetName := fmt.Sprintf("pengshan-%s-%s.tar.gz", runtime.GOOS, runtime.GOARCH)
-	checksums, assetURL, err := findAssets(rel, assetName)
+	checksums, assetURL, err := findAssets(rel, assetName, mirror)
 	if err != nil {
 		return err
 	}
@@ -164,7 +179,12 @@ func fetchRelease(client *http.Client, wantVersion string) (*releaseInfo, error)
 }
 
 // findAssets 找平台资产与 checksums 的下载地址。
-func findAssets(rel *releaseInfo, assetName string) (checksumsURL, assetURL string, err error) {
+// mirror 非空时直接从镜像基 URL 拼接（平铺结构），跳过资产表查询。
+func findAssets(rel *releaseInfo, assetName, mirror string) (checksumsURL, assetURL string, err error) {
+	if mirror != "" {
+		base := strings.TrimSuffix(mirror, "/")
+		return base + "/checksums.txt", base + "/" + assetName, nil
+	}
 	for _, a := range rel.Assets {
 		switch a.Name {
 		case "checksums.txt":
@@ -182,7 +202,22 @@ func findAssets(rel *releaseInfo, assetName string) (checksumsURL, assetURL stri
 	return checksumsURL, assetURL, nil
 }
 
+// download 下载到 dest；file:// 直通（镜像/演练模式）。
 func download(client *http.Client, url, dest string) error {
+	if strings.HasPrefix(url, "file://") {
+		src, err := os.Open(strings.TrimPrefix(url, "file://"))
+		if err != nil {
+			return err
+		}
+		defer src.Close()
+		dst, err := os.Create(dest)
+		if err != nil {
+			return err
+		}
+		defer dst.Close()
+		_, err = io.Copy(dst, src)
+		return err
+	}
 	req, _ := http.NewRequest("GET", url, nil)
 	req.Header.Set("User-Agent", "pengshan-update")
 	resp, err := client.Do(req)
