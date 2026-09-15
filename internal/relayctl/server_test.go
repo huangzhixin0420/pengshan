@@ -122,7 +122,7 @@ func newKey(t *testing.T) *ecdh.PrivateKey {
 // startDaemon 起 control 连接 + attach 路由（生产 daemon.Run 的测试替身）。
 func startDaemon(t *testing.T, baseURL string, dh *daemonHandle, serveAddr string) *relayclient.Control {
 	t.Helper()
-	ctrl, err := relayclient.DialControl(context.Background(), baseURL, "psn_test")
+	ctrl, err := relayclient.DialControl(context.Background(), baseURL, "psn_test", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +164,7 @@ func dialTunnel(t *testing.T, baseURL string, devLong *ecdh.PrivateKey, psnPub *
 
 func TestEcho_ThroughRelay(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := relayctl.NewServer(logger)
+	srv := relayctl.NewServer(logger, "")
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 	baseURL := "ws" + ts.URL[len("http"):]
@@ -230,7 +230,7 @@ func TestEcho_ThroughRelay(t *testing.T) {
 // TestHTTPAndWS_ThroughTunnel 是 M3 主验收：隧道里跑真实 HTTP 请求 + WS 流式。
 func TestHTTPAndWS_ThroughTunnel(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := relayctl.NewServer(logger)
+	srv := relayctl.NewServer(logger, "")
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 	baseURL := "ws" + ts.URL[len("http"):]
@@ -356,7 +356,7 @@ func readWSFrame(br *bufio.Reader) ([]byte, error) {
 
 // TestNoDaemon / TestRevokedDevice 负向对照。
 func TestNoDaemon(t *testing.T) {
-	srv := relayctl.NewServer(nil)
+	srv := relayctl.NewServer(nil, "")
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 	baseURL := "ws" + ts.URL[len("http"):]
@@ -397,13 +397,13 @@ func TestBridgeServeUnavailable(t *testing.T) {
 // TestAttachTimeout：daemon 不回连时 app 被清理（不挂死）。
 func TestAttachTimeout(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := relayctl.NewServer(logger)
+	srv := relayctl.NewServer(logger, "")
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 	baseURL := "ws" + ts.URL[len("http"):]
 
 	// control 在线但不处理 attach（不回连）。
-	ctrl, err := relayclient.DialControl(context.Background(), baseURL, "lazy")
+	ctrl, err := relayclient.DialControl(context.Background(), baseURL, "lazy", "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -22,6 +22,8 @@ type Config struct {
 	ServeAddr string `json:"serve_addr,omitempty"`
 	// RelayURLs 是可用的 relay 地址（wss://…），优先级从高到低。
 	RelayURLs []string `json:"relay_urls,omitempty"`
+	// RelayToken 是 /control Bearer（公网 relay 鉴权；本机回环可空）。
+	RelayToken string `json:"relay_token,omitempty"`
 	// LogLevel: debug|info|warn|error。
 	LogLevel string `json:"log_level,omitempty"`
 }

@@ -39,6 +39,8 @@ func newConfigCmd() *cobra.Command {
 				v = c.ServeAddr
 			case "relay_urls":
 				v = c.RelayURLs
+			case "relay_token":
+				v = c.RelayToken
 			case "log_level":
 				v = c.LogLevel
 			default:
@@ -68,6 +70,8 @@ func newConfigCmd() *cobra.Command {
 					return fmt.Errorf("relay_urls 需 JSON 数组：%v", err)
 				}
 				c.RelayURLs = urls
+			case "relay_token":
+				c.RelayToken = raw
 			case "log_level":
 				if raw != "debug" && raw != "info" && raw != "warn" && raw != "error" {
 					return fmt.Errorf("log_level ∈ debug|info|warn|error")

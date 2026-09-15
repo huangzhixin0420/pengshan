@@ -85,6 +85,8 @@ type Server struct {
 	now      func() time.Time
 	// attachTimeout 是 daemon 回连窗口（测试可调小）。
 	attachTimeout time.Duration
+	// token 非空时 /control 要求 Authorization: Bearer <token>（公网部署必备）。
+	token string
 }
 
 // topologyPayload 是 daemon 周期上报的网络/服务快照（relay 存最新一份，
@@ -106,8 +108,8 @@ type controlConn struct {
 	topologyAt time.Time
 }
 
-// NewServer 组装 relay。
-func NewServer(logger *slog.Logger) *Server {
+// NewServer 组装 relay。token 非空时 /control 校验 Bearer（PENGSHAN_RELAY_TOKEN）。
+func NewServer(logger *slog.Logger, token string) *Server {
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
@@ -117,6 +119,7 @@ func NewServer(logger *slog.Logger) *Server {
 		logger:        logger,
 		now:           time.Now,
 		attachTimeout: AttachTimeout,
+		token:         token,
 	}
 }
 
@@ -140,6 +143,13 @@ func (s *Server) Handler() http.Handler {
 // --- control ---
 
 func (s *Server) handleControl(w http.ResponseWriter, r *http.Request) {
+	if s.token != "" {
+		auth := r.Header.Get("Authorization")
+		if auth != "Bearer "+s.token {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+	}
 	conn, err := websocket.Accept(w, r, nil)
 	if err != nil {
 		return
@@ -219,10 +229,12 @@ func (s *Server) sendAttachRequest(attachID string) error {
 	if target == nil {
 		return ErrNoDaemon
 	}
-	return target.writeJSON(controlFrame{
+	err := target.writeJSON(controlFrame{
 		V: 1, T: "attach-request",
 		Payload: mustJSON(attachRequestPayload{AttachID: attachID}),
 	})
+	s.logger.Debug("attach-request sent", "id", attachID, "target", fmt.Sprintf("%p", target), "err", err)
+	return err
 }
 
 // failAttach 由 daemon 拒绝（设备吊销/内部错误）时关闭 app 侧并清场。

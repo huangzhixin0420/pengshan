@@ -17,8 +17,9 @@ import (
 // newRunCmd 前台运行 daemon（调试/M4 前的常驻形态）。
 func newRunCmd() *cobra.Command {
 	var (
-		relayURL  string
-		serveAddr string
+		relayURL   string
+		relayToken string
+		serveAddr  string
 	)
 	cmd := &cobra.Command{
 		Use:   "run",
@@ -35,6 +36,9 @@ func newRunCmd() *cobra.Command {
 			if serveAddr == "" {
 				serveAddr = cfg.ServeAddr
 			}
+			if relayToken == "" {
+				relayToken = cfg.RelayToken
+			}
 			if relayURL == "" || serveAddr == "" {
 				return fmt.Errorf("relay/serve 未配置：\n" +
 					"  pengshan config set serve_addr 127.0.0.1:9121\n" +
@@ -46,13 +50,15 @@ func newRunCmd() *cobra.Command {
 			defer stop()
 			logger.Info("pengshan daemon starting", "relay", relayURL, "serve", serveAddr)
 			return daemon.Run(ctx, daemon.Config{
-				RelayURL:  relayURL,
-				ServeAddr: serveAddr,
-				DaemonID:  "psn",
+				RelayURL:   relayURL,
+				RelayToken: relayToken,
+				ServeAddr:  serveAddr,
+				DaemonID:   "psn",
 			}, logger)
 		},
 	}
 	cmd.Flags().StringVar(&relayURL, "relay", "", "relay 地址（覆盖 config relay_urls[0]）")
+	cmd.Flags().StringVar(&relayToken, "relay-token", "", "control Bearer token（覆盖 config relay_token）")
 	cmd.Flags().StringVar(&serveAddr, "serve", "", "本地 hermes serve 地址（覆盖 config serve_addr）")
 	return cmd
 }

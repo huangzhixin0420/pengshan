@@ -28,7 +28,7 @@ import (
 // 这是 DEV-PLAN §8 M5 的"重连风暴压测"自动化版（一轮 = 一次 attach 循环）。
 func TestRelayStorm(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := relayctl.NewServer(logger)
+	srv := relayctl.NewServer(logger, "")
 	srv.SetAttachTimeoutForTest(2 * time.Second)
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
@@ -170,12 +170,12 @@ func mustEphKey() *ecdh.PrivateKey {
 
 // TestTopologySnapshot：daemon 上报 → /api/v1/topology 可查。
 func TestTopologySnapshot(t *testing.T) {
-	srv := relayctl.NewServer(nil)
+	srv := relayctl.NewServer(nil, "")
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 	baseURL := "ws" + ts.URL[len("http"):]
 
-	ctrl, err := relayclient.DialControl(context.Background(), baseURL, "psn_topo")
+	ctrl, err := relayclient.DialControl(context.Background(), baseURL, "psn_topo", "")
 	if err != nil {
 		t.Fatal(err)
 	}

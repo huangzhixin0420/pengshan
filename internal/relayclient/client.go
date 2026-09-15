@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"sync"
 	"time"
 
@@ -35,10 +36,13 @@ type Control struct {
 	writeMu sync.Mutex
 }
 
-// DialControl 连 relay /control 并完成注册（M3 无鉴权，register 帧仅声明角色；
-// bootstrap/refresh token 在 M4 分发阶段加入）。
-func DialControl(ctx context.Context, baseURL, daemonID string) (*Control, error) {
-	conn, _, err := websocket.Dial(ctx, baseURL+"/control", nil)
+// DialControl 连 relay /control 并完成注册。token 非空时带 Bearer（公网 relay 鉴权）。
+func DialControl(ctx context.Context, baseURL, daemonID, token string) (*Control, error) {
+	dialOpts := &websocket.DialOptions{}
+	if token != "" {
+		dialOpts.HTTPHeader = http.Header{"Authorization": []string{"Bearer " + token}}
+	}
+	conn, _, err := websocket.Dial(ctx, baseURL+"/control", dialOpts)
 	if err != nil {
 		return nil, fmt.Errorf("dial control: %w", err)
 	}

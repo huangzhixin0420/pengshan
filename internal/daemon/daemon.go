@@ -26,9 +26,10 @@ import (
 
 // Config 是 daemon 运行参数。
 type Config struct {
-	RelayURL  string // ws(s)://relay 地址
-	ServeAddr string // 127.0.0.1:9121 等
-	DaemonID  string // control 注册 ID（展示用，如 "psn"）
+	RelayURL   string // ws(s)://relay 地址
+	RelayToken string // /control Bearer（公网 relay 鉴权；本机回环可空）
+	ServeAddr  string // 127.0.0.1:9121 等
+	DaemonID   string // control 注册 ID（展示用，如 "psn"）
 }
 
 // Run 阻塞运行：连 control → 等 attach 事件 → 每条 attach 起一个
@@ -84,7 +85,7 @@ func dbPath() string {
 }
 
 func (d *daemon) runOnce(ctx context.Context) error {
-	ctrl, err := relayclient.DialControl(ctx, d.cfg.RelayURL, d.cfg.DaemonID)
+	ctrl, err := relayclient.DialControl(ctx, d.cfg.RelayURL, d.cfg.DaemonID, d.cfg.RelayToken)
 	if err != nil {
 		return err
 	}
