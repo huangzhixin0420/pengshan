@@ -1,18 +1,22 @@
 // Package relayctl 是蓬山 relay 服务端：无秘密的对接交换机。
-// 路由（M1）：
 //
-//	GET /control       daemon 注册 control socket（心跳/信令；M2 起带 bootstrap 鉴权）
-//	GET /tunnel/{ch}   app 挂隧道一端
-//	GET /attach/{ch}   daemon 挂隧道另一端；两端齐 → 双向 message pump
-//	GET /healthz       存活探针
+// 数据面路由（M3 定稿）：
 //
-// relay 不落盘、不持密钥：channels 是纯内存映射，channel_id（128bit 随机）
-// 由 daemon 经 control 开隧道时指定（M2 接线；M1 由 Registry.RegisterChannel 直注，
-// 模拟"配对通道下发 ch"）。ch 有 TTL，两端 attach 即消费、任一端断开即清。
+//	app  GET /tunnel        → relay 生成 attach_id，向唯一 control 发
+//	                        attach-request {attach_id}，挂起等 daemon 回连
+//	daemon GET /attach/{id} → relay 查 pending 表，两端齐 → 双向 message pump
+//
+// 为什么 relay 不读 app 的 hello 帧：单 daemon 阶段路由不需要 device_id
+// （任何 attach-request 都发给唯一 control），hello 直通给 daemon，
+// daemon 自己查 store 验设备并做 e2e 握手。多 daemon 路由（读 hello、
+// device→control 路由表）留 Phase 1.5+，此处注释为界。
+//
+// relay 不落盘、不持密钥、不解密 payload。
 package relayctl
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"io"
@@ -26,56 +30,59 @@ import (
 	"github.com/huangzhixin0420/pengshan/internal/e2e"
 )
 
-// ChannelTTL 是 channel 从创建到两端 attach 完成的窗口。
-const ChannelTTL = 60 * time.Second
+// AttachTimeout 是 daemon 回连 /attach 的窗口。
+const AttachTimeout = 15 * time.Second
 
 var (
-	ErrChannelNotFound = errors.New("relay: channel not found")
-	ErrChannelExpired  = errors.New("relay: channel expired")
-	ErrChannelBusy     = errors.New("relay: channel already attached")
+	ErrNoDaemon        = errors.New("relay: no daemon connected")
+	ErrAttachNotFound  = errors.New("relay: attach id not found")
+	ErrAttachExpired   = errors.New("relay: attach id expired")
+	ErrAttachConsumed  = errors.New("relay: attach id already consumed")
 )
 
 // controlFrame 是 control socket 的 JSON 帧（relay 可见、不加密）。
+// 方向：relay → daemon：ping / attach-request；
+// 方向：daemon → relay：pong / attach-deny。
 type controlFrame struct {
 	V       int             `json:"v"`
-	T       string          `json:"t"` // register/ping/pong/open/close/attach-request
+	T       string          `json:"t"`
 	Payload json.RawMessage `json:"p,omitempty"`
 }
 
-type channel struct {
+type attachRequestPayload struct {
+	AttachID string `json:"attach_id"`
+}
+
+type attachDenyPayload struct {
+	AttachID string `json:"attach_id"`
+	Reason   string `json:"reason"`
+}
+
+// pendingAttach 是一次待对接的 app 侧连接。
+type pendingAttach struct {
 	id     string
 	exp    time.Time
 	mu     sync.Mutex
 	app    *websocket.Conn
 	daemon *websocket.Conn
-	// attachCh 在两端集齐时关闭，通知等待端放行。
-	attachCh chan struct{}
-	once     sync.Once
-	done     chan struct{}
-	// pumpOnce 保证对接泵全 relay 只启动一次（两端 attachSide 都会走到，
-	// 先到端在 select 唤醒后、后到端在 close(attachCh) 后，竞争只放行一个）。
-	pumpOnce sync.Once
+	once   sync.Once
+	done   chan struct{}
 }
 
-func (c *channel) complete() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.app != nil && c.daemon != nil
-}
-
-// completeLocked 是持锁版（attachSide 已持 ch.mu 时调用，避免自死锁）。
-func (c *channel) completeLocked() bool {
-	return c.app != nil && c.daemon != nil
-}
+func (p *pendingAttach) completeLocked() bool { return p.app != nil && p.daemon != nil }
 
 // Server 是 relay 核心。
 type Server struct {
 	mu       sync.Mutex
-	channels map[string]*channel
-	// controls 仅用于生命周期联动：control 断开时清理其渠道（M2 起按 daemon 归属）。
-	controls map[*websocket.Conn]struct{}
+	attaches map[string]*pendingAttach
+	controls map[*controlConn]struct{}
 	logger   *slog.Logger
-	now      func() time.Time // 可注入时钟（测试）
+	now      func() time.Time
+}
+
+type controlConn struct {
+	ws  *websocket.Conn
+	wmu sync.Mutex // control 写锁（pong 与 deny 并发写）
 }
 
 // NewServer 组装 relay。
@@ -84,8 +91,8 @@ func NewServer(logger *slog.Logger) *Server {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 	return &Server{
-		channels: make(map[string]*channel),
-		controls: make(map[*websocket.Conn]struct{}),
+		attaches: make(map[string]*pendingAttach),
+		controls: make(map[*controlConn]struct{}),
 		logger:   logger,
 		now:      time.Now,
 	}
@@ -99,50 +106,12 @@ func (s *Server) Handler() http.Handler {
 		_, _ = w.Write([]byte("ok"))
 	})
 	mux.HandleFunc("GET /control", s.handleControl)
-	mux.HandleFunc("GET /tunnel/{ch}", s.handleTunnel)
-	mux.HandleFunc("GET /attach/{ch}", s.handleAttach)
+	mux.HandleFunc("GET /tunnel", s.handleTunnel)
+	mux.HandleFunc("GET /attach/{id}", s.handleAttach)
 	return mux
 }
 
-// RegisterChannel 预登记 channel（M1 由测试/将来 pairing 通道调用；正常路径是 control open 帧）。
-func (s *Server) RegisterChannel(id string, ttl time.Duration) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	ch := &channel{
-		id:       id,
-		exp:      s.now().Add(ttl),
-		attachCh: make(chan struct{}),
-		done:     make(chan struct{}),
-	}
-	s.channels[id] = ch
-	time.AfterFunc(ttl, func() { s.evict(id, ErrChannelExpired) })
-}
-
-func (s *Server) evict(id string, cause error) {
-	s.mu.Lock()
-	ch, ok := s.channels[id]
-	if !ok {
-		s.mu.Unlock()
-		return
-	}
-	delete(s.channels, id)
-	s.mu.Unlock()
-	ch.once.Do(func() { close(ch.done) })
-	s.logger.Debug("channel evicted", "id", id, "cause", cause)
-}
-
-func (s *Server) getChannel(id string) (*channel, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	ch, ok := s.channels[id]
-	if !ok {
-		return nil, ErrChannelNotFound
-	}
-	if s.now().After(ch.exp) {
-		return nil, ErrChannelExpired
-	}
-	return ch, nil
-}
+// --- control ---
 
 func (s *Server) handleControl(w http.ResponseWriter, r *http.Request) {
 	conn, err := websocket.Accept(w, r, nil)
@@ -150,18 +119,18 @@ func (s *Server) handleControl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	conn.SetReadLimit(e2e.ReadLimit)
+	cc := &controlConn{ws: conn}
 	s.mu.Lock()
-	s.controls[conn] = struct{}{}
+	s.controls[cc] = struct{}{}
 	s.mu.Unlock()
 	defer func() {
 		s.mu.Lock()
-		delete(s.controls, conn)
+		delete(s.controls, cc)
 		s.mu.Unlock()
 		_ = conn.CloseNow()
 		s.logger.Debug("control closed")
 	}()
 	s.logger.Debug("control registered")
-	// M1 只应答 ping；open/close/attach-request 在 M2 接线。
 	for {
 		var f controlFrame
 		if err := wsReadJSON(r.Context(), conn, &f); err != nil {
@@ -169,23 +138,152 @@ func (s *Server) handleControl(w http.ResponseWriter, r *http.Request) {
 		}
 		switch f.T {
 		case "ping":
-			_ = wsWriteJSON(r.Context(), conn, controlFrame{V: 1, T: "pong"})
+			_ = cc.writeJSON(controlFrame{V: 1, T: "pong"})
+		case "attach-deny":
+			var p attachDenyPayload
+			if err := json.Unmarshal(f.Payload, &p); err == nil && p.AttachID != "" {
+				s.failAttach(p.AttachID, errors.New(p.Reason))
+			}
 		}
 	}
 }
 
-func (s *Server) handleTunnel(w http.ResponseWriter, r *http.Request) {
-	s.attachSide(w, r, true)
+// sendAttachRequest 把 app 的接入请求转给唯一 daemon control。
+// 返回 attachID；当前无 daemon 或写失败返回错误。
+func (s *Server) sendAttachRequest(attachID string) error {
+	s.mu.Lock()
+	var target *controlConn
+	for cc := range s.controls {
+		target = cc // 单 daemon：取第一个
+		break
+	}
+	s.mu.Unlock()
+	if target == nil {
+		return ErrNoDaemon
+	}
+	return target.writeJSON(controlFrame{
+		V: 1, T: "attach-request",
+		Payload: mustJSON(attachRequestPayload{AttachID: attachID}),
+	})
 }
+
+// failAttach 由 daemon 拒绝（设备吊销/内部错误）时关闭 app 侧并清场。
+func (s *Server) failAttach(id string, cause error) {
+	s.mu.Lock()
+	pa, ok := s.attaches[id]
+	if ok {
+		delete(s.attaches, id)
+	}
+	s.mu.Unlock()
+	if !ok {
+		return
+	}
+	pa.once.Do(func() { close(pa.done) })
+	s.logger.Debug("attach denied", "id", id, "cause", cause)
+}
+
+func (s *Server) evictAttach(id string) {
+	s.mu.Lock()
+	pa, ok := s.attaches[id]
+	if ok {
+		delete(s.attaches, id)
+	}
+	s.mu.Unlock()
+	if ok {
+		pa.once.Do(func() { close(pa.done) })
+	}
+}
+
+// hasDaemon 报告当前是否有 control 在线。
+func (s *Server) hasDaemon() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.controls) > 0
+}
+
+// --- /tunnel（app 侧） ---
+
+func (s *Server) handleTunnel(w http.ResponseWriter, r *http.Request) {
+	if !s.hasDaemon() {
+		http.Error(w, ErrNoDaemon.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	var attachIDBytes [16]byte
+	if _, err := rand.Read(attachIDBytes[:]); err != nil {
+		http.Error(w, "rand failed", http.StatusInternalServerError)
+		return
+	}
+	attachID := hexEncode(attachIDBytes[:])
+
+	s.mu.Lock()
+	pa := &pendingAttach{
+		id:   attachID,
+		exp:  s.now().Add(AttachTimeout),
+		done: make(chan struct{}),
+	}
+	s.attaches[attachID] = pa
+	s.mu.Unlock()
+	time.AfterFunc(AttachTimeout, func() { s.failAttachExpired(attachID) })
+
+	// 2) Accept app
+	conn, err := websocket.Accept(w, r, nil)
+	if err != nil {
+		s.evictAttach(attachID)
+		return
+	}
+	conn.SetReadLimit(e2e.ReadLimit)
+	pa.mu.Lock()
+	pa.app = conn
+	ready := pa.completeLocked()
+	pa.mu.Unlock()
+
+	// 3) 通知 daemon（在 app 挂好之后，避免 daemon 瞬间回连时 app 还没登记）
+	if err := s.sendAttachRequest(attachID); err != nil {
+		_ = conn.CloseNow()
+		s.evictAttach(attachID)
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+
+	if !ready {
+		select {
+		case <-pa.done:
+			_ = conn.CloseNow()
+			return
+		case <-r.Context().Done():
+			_ = conn.CloseNow()
+			return
+		}
+	}
+	s.logger.Debug("attach paired", "id", attachID)
+	s.pumpAttach(attachID, pa)
+}
+
+// failAttachExpired 超时清理（与 deny 的区别：不带 cause 日志）。
+func (s *Server) failAttachExpired(id string) {
+	if _, err := s.getAttach(id); err == nil {
+		s.failAttach(id, ErrAttachExpired)
+	}
+}
+
+func (s *Server) getAttach(id string) (*pendingAttach, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	pa, ok := s.attaches[id]
+	if !ok {
+		return nil, ErrAttachNotFound
+	}
+	if s.now().After(pa.exp) {
+		return nil, ErrAttachExpired
+	}
+	return pa, nil
+}
+
+// --- /attach（daemon 侧） ---
 
 func (s *Server) handleAttach(w http.ResponseWriter, r *http.Request) {
-	s.attachSide(w, r, false)
-}
-
-// attachSide 处理 /tunnel 与 /attach 的公共逻辑：登记一端、齐了对泵、错了清理。
-func (s *Server) attachSide(w http.ResponseWriter, r *http.Request, isApp bool) {
-	id := r.PathValue("ch")
-	ch, err := s.getChannel(id)
+	id := r.PathValue("id")
+	pa, err := s.getAttach(id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
@@ -196,30 +294,20 @@ func (s *Server) attachSide(w http.ResponseWriter, r *http.Request, isApp bool) 
 	}
 	conn.SetReadLimit(e2e.ReadLimit)
 
-	ch.mu.Lock()
-	slot := &ch.app
-	if !isApp {
-		slot = &ch.daemon
-	}
-	if *slot != nil {
-		ch.mu.Unlock()
+	pa.mu.Lock()
+	if pa.daemon != nil {
+		pa.mu.Unlock()
 		_ = conn.CloseNow()
-		s.evict(id, ErrChannelBusy)
-		http.Error(w, ErrChannelBusy.Error(), http.StatusConflict)
+		http.Error(w, ErrAttachConsumed.Error(), http.StatusConflict)
 		return
 	}
-	*slot = conn
-	ready := ch.completeLocked()
-	if ready {
-		close(ch.attachCh)
-	}
-	ch.mu.Unlock()
+	pa.daemon = conn
+	ready := pa.completeLocked()
+	pa.mu.Unlock()
 
 	if !ready {
-		// 等对端或超时/清理。
 		select {
-		case <-ch.attachCh:
-		case <-ch.done:
+		case <-pa.done:
 			_ = conn.CloseNow()
 			return
 		case <-r.Context().Done():
@@ -227,32 +315,31 @@ func (s *Server) attachSide(w http.ResponseWriter, r *http.Request, isApp bool) 
 			return
 		}
 	}
-
-	s.logger.Debug("channel attached", "id", id, "app", isApp)
-	s.pumpPair(id, ch)
+	s.logger.Debug("attach paired", "id", id)
+	s.pumpAttach(id, pa)
 }
 
-// pumpPair 双向 message pump：保留 WS message 边界（隧道帧 = 单条文本消息）。
-// 任一端 EOF/出错 → 两端关闭 + channel 清场。
-// 两端 attachSide 都会调用：pumpOnce 放行竞争胜者（必是后到端，或先到端被唤醒后），
-// 败者在 once.Do 外直接返回——handler 生命周期不绑连接（ws 已 hijack，pump 持有引用）。
-func (s *Server) pumpPair(id string, ch *channel) {
-	ch.pumpOnce.Do(func() {
-		ch.mu.Lock()
-		app, daemon := ch.app, ch.daemon
-		ch.mu.Unlock()
+// --- 对接泵 ---
+
+// pumpAttach 双向 message pump（once 保证只启动一次）。
+// 退出语义：任一方向 EOF/出错 → 立即两端 CloseNow，另一方向的阻塞 Read
+// 会因连接关闭而返回——不能等两个方向都退（app 静默时它对端方向的读
+// 永远阻塞，deny/桥接断开会被架空）。
+func (s *Server) pumpAttach(id string, pa *pendingAttach) {
+	pa.once.Do(func() {
+		pa.mu.Lock()
+		app, daemon := pa.app, pa.daemon
+		pa.mu.Unlock()
 		defer func() {
 			_ = app.CloseNow()
 			_ = daemon.CloseNow()
-			s.evict(id, nil)
+			s.evictAttach(id)
 		}()
-
 		ctx := context.Background()
-		var wg sync.WaitGroup
-		wg.Add(2)
-		go func() { defer wg.Done(); pumpConn(ctx, daemon, app) }() // app → daemon
-		go func() { defer wg.Done(); pumpConn(ctx, app, daemon) }() // daemon → app
-		wg.Wait()
+		done := make(chan struct{}, 2)
+		go func() { pumpConn(ctx, daemon, app); done <- struct{}{} }()
+		go func() { pumpConn(ctx, app, daemon); done <- struct{}{} }()
+		<-done // 一个方向死 = 会话结束
 	})
 }
 
@@ -273,4 +360,30 @@ func pumpConn(ctx context.Context, dst, src *websocket.Conn) {
 			return
 		}
 	}
+}
+
+// --- 工具 ---
+
+func (c *controlConn) writeJSON(v controlFrame) error {
+	c.wmu.Lock()
+	defer c.wmu.Unlock()
+	return wsWriteJSON(context.Background(), c.ws, v)
+}
+
+func mustJSON(v any) json.RawMessage {
+	b, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return b
+}
+
+func hexEncode(b []byte) string {
+	const digits = "0123456789abcdef"
+	out := make([]byte, len(b)*2)
+	for i, v := range b {
+		out[i*2] = digits[v>>4]
+		out[i*2+1] = digits[v&0xf]
+	}
+	return string(out)
 }

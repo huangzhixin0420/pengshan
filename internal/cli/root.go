@@ -18,6 +18,7 @@ func NewRoot() *cobra.Command {
 	root.AddCommand(newPairCmd())
 	root.AddCommand(newDevicesCmd())
 	root.AddCommand(newUnpairCmd())
+	root.AddCommand(newRunCmd())
 	return root
 }
 
