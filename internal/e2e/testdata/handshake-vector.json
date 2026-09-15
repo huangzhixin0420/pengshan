@@ -1,0 +1,12 @@
+{
+  "name": "pengshan-tunnel-handshake-v1",
+  "dev_long_seed": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "psn_long_seed": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+  "dev_ephemeral_seed": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+  "psn_ephemeral_seed": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+  "device_id": "dev_vector0001",
+  "hello_b64": "eyJ2IjoxLCJ0IjoiaGVsbG8iLCJkZXZpY2VfaWQiOiJkZXZfdmVjdG9yMDAwMSIsImVfZGV2IjoiZWFZeDd0NGItY21QRWdNczNxM1E1NkI1T1lfSGhyaU15RWJzaWEtRnBSbyIsInRzIjoxNzAwMDAwMDAwfQ",
+  "respond_b64": "eyJ2IjoxLCJ0IjoicmVzcG9uZCIsImVfcHNuIjoiWjEzVmRPMTNpVEVMUFM1MmdmTjVDMFpzZHpzVklmN1BObGQ1V0RjZXBTOCIsInRzIjoxNzAwMDAwMDAwfQ",
+  "app_send_key_hex": "76213b574b77831d3c9fe5d706f4721d8b94c3d924a10305f0fb4087d99de747",
+  "app_recv_key_hex": "9444b31339829eb048d38379f75a3a9a5da6fa4c31757cbc72affa02e405064e"
+}
