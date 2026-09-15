@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/huangzhixin0420/pengshan/internal/config"
 	"github.com/huangzhixin0420/pengshan/internal/daemon"
 )
 
@@ -23,8 +24,22 @@ func newRunCmd() *cobra.Command {
 		Use:   "run",
 		Short: "前台运行蓬山 daemon（连 relay、等设备接入、桥接到本地 serve）",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			// 解析参数：flag 优先，config 兜底。
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			if relayURL == "" && len(cfg.RelayURLs) > 0 {
+				relayURL = cfg.RelayURLs[0]
+			}
+			if serveAddr == "" {
+				serveAddr = cfg.ServeAddr
+			}
 			if relayURL == "" || serveAddr == "" {
-				return fmt.Errorf("--relay 与 --serve 均必填（M4 起支持 config 持久化）")
+				return fmt.Errorf("relay/serve 未配置：\n" +
+					"  pengshan config set serve_addr 127.0.0.1:9121\n" +
+					"  pengshan config set relay_urls '[\"ws://127.0.0.1:9400\"]'\n" +
+					"或用 --relay/--serve 临时指定")
 			}
 			logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
 			ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -37,7 +52,7 @@ func newRunCmd() *cobra.Command {
 			}, logger)
 		},
 	}
-	cmd.Flags().StringVar(&relayURL, "relay", "", "relay 地址（ws://127.0.0.1:9400 或 wss://…）")
-	cmd.Flags().StringVar(&serveAddr, "serve", "", "本地 hermes serve 地址（127.0.0.1:9121）")
+	cmd.Flags().StringVar(&relayURL, "relay", "", "relay 地址（覆盖 config relay_urls[0]）")
+	cmd.Flags().StringVar(&serveAddr, "serve", "", "本地 hermes serve 地址（覆盖 config serve_addr）")
 	return cmd
 }

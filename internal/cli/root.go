@@ -19,6 +19,10 @@ func NewRoot() *cobra.Command {
 	root.AddCommand(newDevicesCmd())
 	root.AddCommand(newUnpairCmd())
 	root.AddCommand(newRunCmd())
+	root.AddCommand(newConfigCmd())
+	root.AddCommand(newAutostartCmd())
+	root.AddCommand(newDoctorCmd())
+	root.AddCommand(newUpdateCmd())
 	return root
 }
 
