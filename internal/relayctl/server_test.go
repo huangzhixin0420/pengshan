@@ -173,7 +173,10 @@ func TestEcho_ThroughRelay(t *testing.T) {
 	dh := &daemonHandle{priv: psnLong, devPub: devLong.PublicKey()}
 	startDaemon(t, baseURL, dh, "echo")
 
-	sizes := []int{64 * 1024, 1 << 20, 64 << 20}
+	sizes := []int{64 * 1024, 1 << 20}
+	if bigSize > 0 {
+		sizes = append(sizes, bigSize)
+	}
 	for _, size := range sizes {
 		t.Run(fmt.Sprintf("%dB", size), func(t *testing.T) {
 			ep := dialTunnel(t, baseURL, devLong, psnLong.PublicKey())
@@ -181,6 +184,8 @@ func TestEcho_ThroughRelay(t *testing.T) {
 
 			want := make([]byte, size)
 			rand.Read(want)
+			// 全双工：写与读各属一个 goroutine（回压链：写满 → daemon echo
+			// 阻塞 → 双方 TCP 缓冲耗尽；半双工会在大帧下死锁）。
 			writeDone := make(chan error, 1)
 			go func() {
 				n, err := ep.Write(want)
@@ -190,11 +195,30 @@ func TestEcho_ThroughRelay(t *testing.T) {
 				writeDone <- err
 			}()
 			got := make([]byte, size)
-			if _, err := io.ReadFull(ep, got); err != nil {
-				t.Fatalf("read back: %v", err)
-			}
-			if err := <-writeDone; err != nil {
-				t.Fatal(err)
+			readDone := make(chan error, 1)
+			go func() {
+				_, err := io.ReadFull(ep, got)
+				readDone <- err
+			}()
+			select {
+			case err := <-writeDone:
+				if err != nil {
+					t.Fatalf("write: %v", err)
+				}
+				// 写已完成：只等读。
+				if err := <-readDone; err != nil {
+					t.Fatalf("read back: %v", err)
+				}
+			case err := <-readDone:
+				if err != nil {
+					t.Fatalf("read back: %v", err)
+				}
+				// 读已完成：只等写。
+				if err := <-writeDone; err != nil {
+					t.Fatalf("write: %v", err)
+				}
+			case <-time.After(echoCaseTimeout):
+				t.Fatalf("echo case %dB exceeded %v（race 开销下可调窗口）", size, echoCaseTimeout)
 			}
 			if !bytes.Equal(got, want) {
 				t.Fatal("echo mismatch")

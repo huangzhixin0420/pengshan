@@ -12,15 +12,15 @@ import (
 
 // 帧类型（tunnel data socket 的 JSON 帧）。
 const (
-	FrameData   = "data"
-	FramePing   = "ping"
-	FramePong   = "pong"
-	FrameClose  = "close"  // body 加密：含 reason
-	FrameErr    = "err"    // body 加密：含错误文案
-	frameVer    = 1
-	nonceSize   = chacha20poly1305.NonceSizeX // 24
-	maxJump     = 1024                        // 序号跳变容忍（超出即断，防位翻转/重放）
-	firstSeq    = 1                           // 序号从 1 起
+	FrameData  = "data"
+	FramePing  = "ping"
+	FramePong  = "pong"
+	FrameClose = "close" // body 加密：含 reason
+	FrameErr   = "err"   // body 加密：含错误文案
+	frameVer   = 1
+	nonceSize  = chacha20poly1305.NonceSizeX // 24
+	maxJump    = 1024                        // 序号跳变容忍（超出即断，防位翻转/重放）
+	firstSeq   = 1                           // 序号从 1 起
 )
 
 var (

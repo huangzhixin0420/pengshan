@@ -17,13 +17,12 @@ import (
 )
 
 // Endpoint 实现 net.Conn。并发模型：Read 与 Write 可各属一个 goroutine
-//（与 io.Copy 双向转发匹配）；多个并发 Read 或并发 Write 由调用方互斥
+// （与 io.Copy 双向转发匹配）；多个并发 Read 或并发 Write 由调用方互斥
 // （bridge 用法天然满足）。
 type Endpoint struct {
-	ws       *websocket.Conn
-	send     *e2e.Cipher
-	recv     *e2e.Cipher
-	isClient bool // true = app 侧（握手发起方），用于日志/调试
+	ws   *websocket.Conn
+	send *e2e.Cipher
+	recv *e2e.Cipher
 
 	rmu  sync.Mutex
 	rbuf []byte // 已解密待消费缓冲

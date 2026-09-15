@@ -45,14 +45,14 @@ var (
 
 // QRPayload 是 QR 码内容（JSON）。
 type QRPayload struct {
-	V        int      `json:"v"`
-	Kind     string   `json:"kind"` // "pengshan-pair"
+	V         int      `json:"v"`
+	Kind      string   `json:"kind"`       // "pengshan-pair"
 	ClaimURLs []string `json:"claim_urls"` // LAN 直连 claim 端点，优先第一个可达
-	PsnID    string   `json:"psn_id"`
-	PsnPK    string   `json:"psn_pk"` // base64url X25519 32B
-	SessionID string  `json:"session_id"`
-	Code     string   `json:"code"`
-	Exp      int64    `json:"exp"` // unix 秒
+	PsnID     string   `json:"psn_id"`
+	PsnPK     string   `json:"psn_pk"` // base64url X25519 32B
+	SessionID string   `json:"session_id"`
+	Code      string   `json:"code"`
+	Exp       int64    `json:"exp"` // unix 秒
 }
 
 // ClaimRequest 是 app 提交的 claim 体。
@@ -67,10 +67,10 @@ type ClaimRequest struct {
 
 // ClaimResponse 是 claim 的响应（含 daemon 身份信息，app 存下供握手用）。
 type ClaimResponse struct {
-	OK      bool   `json:"ok"`
+	OK       bool   `json:"ok"`
 	DeviceID string `json:"device_id,omitempty"`
-	PsnID   string `json:"psn_id,omitempty"`
-	Error   string `json:"error,omitempty"`
+	PsnID    string `json:"psn_id,omitempty"`
+	Error    string `json:"error,omitempty"`
 }
 
 // Manager 组织配对流程。

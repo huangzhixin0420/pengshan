@@ -56,7 +56,7 @@ func loadVector(t *testing.T) vector {
 
 // TestHandshake_Vector 用固定种子复算握手：钉死时钟后逐字节比对 hello/respond，
 // 并断言派生 key 与向量一致。第三方可用 testdata/handshake-vector.json 独立复算
-//（E2E 可审计的兑现；重新生成：PENGSHAN_UPDATE_VECTOR=1 go test ./internal/e2e/）。
+// （E2E 可审计的兑现；重新生成：PENGSHAN_UPDATE_VECTOR=1 go test ./internal/e2e/）。
 func TestHandshake_Vector(t *testing.T) {
 	v := loadVector(t)
 	clock := func() time.Time { return time.Unix(vecClockUnix, 0) }
@@ -283,6 +283,37 @@ func FuzzOpen(f *testing.F) {
 		r := NewCipher(key, false)
 		_, _, _ = r.Open(data) // 断言隐含：无 panic、无 data race（-race 跑）
 	})
+}
+
+// FuzzHandshakeEnvelope：随机 hello/respond 字节不得 panic。
+func FuzzHandshakeEnvelope(f *testing.F) {
+	devLong := mustKeySeed(f)
+	psnLong := mustKeySeed(f)
+	init := NewInitiator("d", devLong, mustKeySeed(f), psnLong.PublicKey())
+	hello, _ := init.Hello()
+	f.Add(hello)
+	f.Add([]byte(`{"v":1,"t":"hello","device_id":"x","e_dev":"AAAA","ts":1700000000}`))
+	f.Fuzz(func(t *testing.T, data []byte) {
+		resp := NewResponder(psnLong, newKey(t), devLong.PublicKey())
+		respond, _, _, err := resp.Respond(data)
+		if err != nil {
+			return
+		}
+		// 能 respond 的（概率近零）也不允许 Finish 出事。
+		init2 := NewInitiator("d", devLong, mustKeySeed(t), psnLong.PublicKey())
+		init2.hello = data
+		_, _ = init2.Finish(respond)
+	})
+}
+
+// mustKeySeed 是 fuzz 友好的密钥生成（testing.T 零值不能过 Helper 路径）。
+func mustKeySeed(tb testing.TB) *ecdh.PrivateKey {
+	tb.Helper()
+	k, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	return k
 }
 
 // TestMain 支持 -update-vector：重新生成 testdata/handshake-vector.json。

@@ -1,6 +1,6 @@
 // update 命令：从 GH Release 自更新。
 // 流程：目标 release（--version 或 latest）→ 匹配平台资产 → sha256 校验
-//（checksums.txt 优先，缺失则报 warn）→ 解压到临时目录 → 备份当前二进制
+// （checksums.txt 优先，缺失则报 warn）→ 解压到临时目录 → 备份当前二进制
 // → rename 替换（inode 语义，运行中的进程不受影响）→ 若 launchd 管理则
 // kickstart -k 重启加载新二进制，否则提示手动重启。
 package cli
@@ -47,8 +47,8 @@ func newUpdateCmd() *cobra.Command {
 }
 
 type releaseInfo struct {
-	TagName string          `json:"tag_name"`
-	Assets  []assetInfo     `json:"assets"`
+	TagName string      `json:"tag_name"`
+	Assets  []assetInfo `json:"assets"`
 }
 
 type assetInfo struct {

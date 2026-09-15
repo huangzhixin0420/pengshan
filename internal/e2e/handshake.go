@@ -28,7 +28,7 @@ type respondEnvelope struct {
 	TS   int64  `json:"ts"`
 }
 
-func b64u(b []byte) string           { return base64.RawURLEncoding.EncodeToString(b) }
+func b64u(b []byte) string            { return base64.RawURLEncoding.EncodeToString(b) }
 func unb64u(s string) ([]byte, error) { return base64.RawURLEncoding.DecodeString(s) }
 
 // hkdfSHA256 一步到位派生 length 字节密钥材料（Go 1.24+ 标准库 crypto/hkdf）。

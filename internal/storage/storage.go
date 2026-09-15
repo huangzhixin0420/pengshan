@@ -14,24 +14,24 @@ import (
 
 // Device 是已配对设备记录。
 type Device struct {
-	DeviceID  string    `json:"device_id"`
-	Label     string    `json:"label"`
-	Platform  string    `json:"platform"`
-	PubKey    []byte    `json:"pub_key"` // X25519 32B
-	PairedAt  time.Time `json:"paired_at"`
-	LastSeen  time.Time `json:"last_seen"`
+	DeviceID  string     `json:"device_id"`
+	Label     string     `json:"label"`
+	Platform  string     `json:"platform"`
+	PubKey    []byte     `json:"pub_key"` // X25519 32B
+	PairedAt  time.Time  `json:"paired_at"`
+	LastSeen  time.Time  `json:"last_seen"`
 	RevokedAt *time.Time `json:"revoked_at,omitempty"`
 }
 
 // PairingSession 是一次性配对会话（QR/短码 claim 的凭据）。
 type PairingSession struct {
-	SessionID string     `json:"session_id"`
-	Code      string     `json:"code"`
-	ExpiresAt time.Time  `json:"expires_at"`
-	Scopes    []string   `json:"scopes,omitempty"`
-	Note      string     `json:"note,omitempty"`
-	ClaimedBy *string    `json:"claimed_by,omitempty"`
-	CreatedAt time.Time  `json:"created_at"`
+	SessionID string    `json:"session_id"`
+	Code      string    `json:"code"`
+	ExpiresAt time.Time `json:"expires_at"`
+	Scopes    []string  `json:"scopes,omitempty"`
+	Note      string    `json:"note,omitempty"`
+	ClaimedBy *string   `json:"claimed_by,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // AuditEvent 是审计行。
@@ -112,8 +112,8 @@ CREATE TABLE IF NOT EXISTS meta (
 
 // ErrDeviceNotFound / ErrDeviceRevoked 供调用方区分。
 var (
-	ErrDeviceNotFound  = errors.New("storage: device not found")
-	ErrDeviceRevoked   = errors.New("storage: device revoked")
+	ErrDeviceNotFound = errors.New("storage: device not found")
+	ErrDeviceRevoked  = errors.New("storage: device revoked")
 )
 
 // PutDevice 写入或覆盖设备（claim 时调用）。

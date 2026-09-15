@@ -17,9 +17,11 @@ import (
 	"github.com/huangzhixin0420/pengshan/internal/config"
 	"github.com/huangzhixin0420/pengshan/internal/e2e"
 	"github.com/huangzhixin0420/pengshan/internal/identity"
+	"github.com/huangzhixin0420/pengshan/internal/netutil"
 	"github.com/huangzhixin0420/pengshan/internal/relayclient"
 	"github.com/huangzhixin0420/pengshan/internal/storage"
 	"github.com/huangzhixin0420/pengshan/internal/tunnel"
+	"github.com/huangzhixin0420/pengshan/internal/version"
 )
 
 // Config 是 daemon 运行参数。
@@ -94,9 +96,13 @@ func (d *daemon) runOnce(ctx context.Context) error {
 		go d.handleAttach(ctx, ctrl, attachID)
 	})
 
-	// WS 层心跳：25s ping（协议栈自动 pong；读循环对端断开会退出）。
+	// WS 层心跳 25s + topology 上报 20s（同 ticker 错峰即可，不必精细）。
 	hb := time.NewTicker(25 * time.Second)
 	defer hb.Stop()
+	topo := time.NewTicker(20 * time.Second)
+	defer topo.Stop()
+	// 连接建立立即上报一帧（app 立刻可查）。
+	d.reportTopology(ctrl)
 	for {
 		select {
 		case <-ctx.Done():
@@ -107,8 +113,23 @@ func (d *daemon) runOnce(ctx context.Context) error {
 			if err := ctrl.PingWS(); err != nil {
 				return err
 			}
+		case <-topo.C:
+			d.reportTopology(ctrl)
 		}
 	}
+}
+
+// reportTopology 采集本机网络/serve 快照上报 relay。
+func (d *daemon) reportTopology(ctrl *relayclient.Control) {
+	devs, _ := d.store.ListDevices()
+	serveOK := bridge.Probe(d.cfg.ServeAddr) == nil
+	_ = ctrl.SendTopology(relayclient.Topology{
+		LANEndpoints: netutil.LANAddrs(),
+		ServeOK:      serveOK,
+		ServeAddr:    d.cfg.ServeAddr,
+		Version:      version.Version,
+		Devices:      len(devs),
+	})
 }
 
 // handleAttach 处理一次 app 接入：回连 → 读 hello → 验设备 → 握手 → 桥接。

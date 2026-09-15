@@ -6,6 +6,8 @@ import (
 	"net"
 
 	"github.com/spf13/cobra"
+
+	"github.com/huangzhixin0420/pengshan/internal/netutil"
 )
 
 // NewRoot 组装根命令。
@@ -26,35 +28,8 @@ func NewRoot() *cobra.Command {
 	return root
 }
 
-// lanIPv4s 返回本机所有非回环 IPv4（多网卡全列，app 择优）。
-func lanIPv4s() []string {
-	ifaces, err := net.Interfaces()
-	if err != nil {
-		return nil
-	}
-	var out []string
-	for _, ifc := range ifaces {
-		if ifc.Flags&net.FlagUp == 0 || ifc.Flags&net.FlagLoopback != 0 {
-			continue
-		}
-		addrs, err := ifc.Addrs()
-		if err != nil {
-			continue
-		}
-		for _, a := range addrs {
-			ipNet, ok := a.(*net.IPNet)
-			if !ok {
-				continue
-			}
-			ip := ipNet.IP.To4()
-			if ip == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
-				continue
-			}
-			out = append(out, ip.String())
-		}
-	}
-	return out
-}
+// lanIPv4s 见 netutil.LANAddrs（此处保留别名减少 diff 面）。
+func lanIPv4s() []string { return netutil.LANAddrs() }
 
 // pickClaimPort 从 preferred 开始找空闲 TCP 端口。
 func pickClaimPort(preferred int) (int, error) {

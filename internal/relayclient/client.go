@@ -89,6 +89,26 @@ func (c *Control) readLoop() {
 	}
 }
 
+// Topology 是 daemon 周期上报的快照（与 relayctl 的 topologyPayload 同构 JSON）。
+type Topology struct {
+	LANEndpoints []string `json:"lan_endpoints,omitempty"`
+	ServeOK      bool     `json:"serve_ok"`
+	ServeAddr    string   `json:"serve_addr,omitempty"`
+	Version      string   `json:"version,omitempty"`
+	Devices      int      `json:"devices,omitempty"`
+}
+
+// SendTopology 上报网络/服务快照（relay 存最新一份供 app 择优）。
+func (c *Control) SendTopology(t Topology) error {
+	payload, _ := json.Marshal(t)
+	b, _ := json.Marshal(controlFrame{
+		V:       1,
+		T:       "topology",
+		Payload: payload,
+	})
+	return c.write(b)
+}
+
 // AttachDeny 拒绝一次 attach（设备吊销/内部错误），relay 会关闭 app 侧。
 func (c *Control) AttachDeny(attachID, reason string) error {
 	b, _ := json.Marshal(controlFrame{
